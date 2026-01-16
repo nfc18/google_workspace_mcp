@@ -5,6 +5,9 @@ import json
 import jwt
 import logging
 import os
+import platform
+import subprocess
+import webbrowser
 
 from typing import List, Optional, Tuple, Dict, Any
 from urllib.parse import parse_qs, urlparse
@@ -69,6 +72,55 @@ else:
     )
 
 # --- Helper Functions ---
+
+
+def _open_auth_url_in_browser(auth_url: str) -> bool:
+    """
+    Opens the authentication URL in the user's browser.
+    On macOS, prefers Safari via AppleScript. Falls back to webbrowser on other platforms.
+
+    Args:
+        auth_url: The OAuth authorization URL to open.
+
+    Returns:
+        True if the browser was opened successfully, False otherwise.
+    """
+    try:
+        if platform.system() == "Darwin":  # macOS
+            # Use AppleScript via osascript - works better from background processes
+            escaped_url = auth_url.replace('\\', '\\\\').replace('"', '\\"')
+            applescript = f'tell application "Safari" to open location "{escaped_url}"'
+            result = subprocess.run(
+                ["osascript", "-e", applescript],
+                capture_output=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                # Also bring Safari to front
+                subprocess.run(
+                    ["osascript", "-e", 'tell application "Safari" to activate'],
+                    capture_output=True,
+                    timeout=5
+                )
+                logger.info("[AUTH] Opened auth URL in Safari via AppleScript")
+                return True
+            else:
+                logger.warning(f"[AUTH] AppleScript failed: {result.stderr.decode()}")
+                # Fallback to webbrowser module
+                if webbrowser.open(auth_url):
+                    logger.info("[AUTH] Opened auth URL via webbrowser fallback")
+                    return True
+        else:
+            # Use webbrowser module for cross-platform compatibility
+            if webbrowser.open(auth_url):
+                logger.info("[AUTH] Opened auth URL in default browser")
+                return True
+    except subprocess.TimeoutExpired:
+        logger.warning("[AUTH] Timeout opening browser")
+    except Exception as e:
+        logger.warning(f"[AUTH] Failed to open browser: {e}")
+
+    return False
 
 
 def _find_any_credentials(
@@ -374,33 +426,48 @@ async def start_auth_flow(
             f"Auth flow started for {user_display_name}. State: {oauth_state[:8]}... Advise user to visit: {auth_url}"
         )
 
-        message_lines = [
-            f"**ACTION REQUIRED: Google Authentication Needed for {user_display_name}**\n",
-            f"To proceed, the user must authorize this application for {service_name} access using all required permissions.",
-            "**LLM, please present this exact authorization URL to the user as a clickable hyperlink:**",
-            f"Authorization URL: {auth_url}",
-            f"Markdown for hyperlink: [Click here to authorize {service_name} access]({auth_url})\n",
-            "**LLM, after presenting the link, instruct the user as follows:**",
-            "1. Click the link and complete the authorization in their browser.",
-        ]
-        session_info_for_llm = ""
+        # Automatically open the auth URL in the browser
+        browser_opened = _open_auth_url_in_browser(auth_url)
 
-        if not initial_email_provided:
-            message_lines.extend(
-                [
-                    f"2. After successful authorization{session_info_for_llm}, the browser page will display the authenticated email address.",
-                    "   **LLM: Instruct the user to provide you with this email address.**",
-                    "3. Once you have the email, **retry their original command, ensuring you include this `user_google_email`.**",
-                ]
-            )
+        if browser_opened:
+            message_lines = [
+                f"**ACTION REQUIRED: Google Authentication Needed for {user_display_name}**\n",
+                "BROWSER_OPENED: true",
+                f"AUTH_URL: {auth_url}\n",
+                "A browser window has been opened for Google login.",
+                f"Please complete the {service_name} authorization and try again.",
+            ]
         else:
-            message_lines.append(
-                f"2. After successful authorization{session_info_for_llm}, **retry their original command**."
-            )
+            message_lines = [
+                f"**ACTION REQUIRED: Google Authentication Needed for {user_display_name}**\n",
+                "BROWSER_OPENED: false",
+                f"To proceed, the user must authorize this application for {service_name} access using all required permissions.",
+                "**LLM, please present this exact authorization URL to the user as a clickable hyperlink:**",
+                f"Authorization URL: {auth_url}",
+                f"Markdown for hyperlink: [Click here to authorize {service_name} access]({auth_url})\n",
+                "**LLM, after presenting the link, instruct the user as follows:**",
+                "1. Click the link and complete the authorization in their browser.",
+            ]
+        # Only add detailed instructions if browser was not auto-opened
+        if not browser_opened:
+            session_info_for_llm = ""
 
-        message_lines.append(
-            f"\nThe application will use the new credentials. If '{user_google_email}' was provided, it must match the authenticated account."
-        )
+            if not initial_email_provided:
+                message_lines.extend(
+                    [
+                        f"2. After successful authorization{session_info_for_llm}, the browser page will display the authenticated email address.",
+                        "   **LLM: Instruct the user to provide you with this email address.**",
+                        "3. Once you have the email, **retry their original command, ensuring you include this `user_google_email`.**",
+                    ]
+                )
+            else:
+                message_lines.append(
+                    f"2. After successful authorization{session_info_for_llm}, **retry their original command**."
+                )
+
+            message_lines.append(
+                f"\nThe application will use the new credentials. If '{user_google_email}' was provided, it must match the authenticated account."
+            )
         return "\n".join(message_lines)
 
     except FileNotFoundError as e:
