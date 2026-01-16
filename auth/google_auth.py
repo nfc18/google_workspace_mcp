@@ -73,11 +73,16 @@ else:
 
 # --- Helper Functions ---
 
+# Track last browser open to prevent duplicates
+_last_browser_open_time = 0.0
+_BROWSER_OPEN_COOLDOWN = 5.0  # seconds
+
 
 def _open_auth_url_in_browser(auth_url: str) -> bool:
     """
     Opens the authentication URL in the user's browser.
     On macOS, prefers Safari via AppleScript. Falls back to webbrowser on other platforms.
+    Includes deduplication to prevent multiple popups within a short time window.
 
     Args:
         auth_url: The OAuth authorization URL to open.
@@ -85,6 +90,15 @@ def _open_auth_url_in_browser(auth_url: str) -> bool:
     Returns:
         True if the browser was opened successfully, False otherwise.
     """
+    import time
+    global _last_browser_open_time
+
+    # Prevent duplicate browser opens within cooldown period
+    current_time = time.time()
+    if current_time - _last_browser_open_time < _BROWSER_OPEN_COOLDOWN:
+        logger.info("[AUTH] Skipping browser open - within cooldown period")
+        return True  # Return True since browser was recently opened
+
     try:
         if platform.system() == "Darwin":  # macOS
             # Use AppleScript via osascript - works better from background processes
@@ -102,17 +116,20 @@ def _open_auth_url_in_browser(auth_url: str) -> bool:
                     capture_output=True,
                     timeout=5
                 )
+                _last_browser_open_time = current_time
                 logger.info("[AUTH] Opened auth URL in Safari via AppleScript")
                 return True
             else:
                 logger.warning(f"[AUTH] AppleScript failed: {result.stderr.decode()}")
                 # Fallback to webbrowser module
                 if webbrowser.open(auth_url):
+                    _last_browser_open_time = current_time
                     logger.info("[AUTH] Opened auth URL via webbrowser fallback")
                     return True
         else:
             # Use webbrowser module for cross-platform compatibility
             if webbrowser.open(auth_url):
+                _last_browser_open_time = current_time
                 logger.info("[AUTH] Opened auth URL in default browser")
                 return True
     except subprocess.TimeoutExpired:
