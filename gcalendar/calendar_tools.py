@@ -645,6 +645,10 @@ async def create_event(
             f"[create_event] Adding Google Meet conference with request ID: {request_id}"
         )
 
+    # Determine if we should send notifications to attendees
+    send_updates = "all" if attendees else "none"
+    logger.info(f"[create_event] sendUpdates set to '{send_updates}' (attendees: {bool(attendees)})")
+
     if attachments:
         # Accept both file URLs and file IDs. If a URL, extract the fileId.
         event_body["attachments"] = []
@@ -712,6 +716,7 @@ async def create_event(
                 body=event_body,
                 supportsAttachments=True,
                 conferenceDataVersion=1 if add_google_meet else 0,
+                sendUpdates=send_updates,
             )
             .execute()
         )
@@ -722,6 +727,7 @@ async def create_event(
                 calendarId=calendar_id,
                 body=event_body,
                 conferenceDataVersion=1 if add_google_meet else 0,
+                sendUpdates=send_updates,
             )
             .execute()
         )
@@ -983,6 +989,11 @@ async def modify_event(
                 f"[modify_event] Error during pre-update verification, but proceeding with update: {get_error}"
             )
 
+    # Determine if we should send notifications to attendees
+    # Send updates if attendees are being modified
+    send_updates = "all" if normalized_attendees is not None else "none"
+    logger.info(f"[modify_event] sendUpdates set to '{send_updates}' (attendees modified: {normalized_attendees is not None})")
+
     # Proceed with the update
     updated_event = await asyncio.to_thread(
         lambda: service.events()
@@ -991,6 +1002,7 @@ async def modify_event(
             eventId=event_id,
             body=event_body,
             conferenceDataVersion=1,
+            sendUpdates=send_updates,
         )
         .execute()
     )
