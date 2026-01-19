@@ -43,18 +43,36 @@ class _HTMLTextExtractor(HTMLParser):
         self._skip = False
 
     def handle_starttag(self, tag, attrs):
-        self._skip = tag in ("script", "style")
+        if tag in ("script", "style"):
+            self._skip = True
+        elif tag == "br":
+            self._text.append("\n")
+        elif tag in ("p", "div", "tr"):
+            # Add newline before block elements (if not at start)
+            if self._text and self._text[-1] != "\n":
+                self._text.append("\n")
 
     def handle_endtag(self, tag):
         if tag in ("script", "style"):
             self._skip = False
+        elif tag in ("p", "div", "tr"):
+            # Add newline after block elements
+            if self._text and self._text[-1] != "\n":
+                self._text.append("\n")
 
     def handle_data(self, data):
         if not self._skip:
             self._text.append(data)
 
     def get_text(self) -> str:
-        return " ".join("".join(self._text).split())
+        # Join text parts and normalize whitespace (but preserve newlines)
+        import re
+        text = "".join(self._text)
+        text = re.sub(r"[^\S\n]+", " ", text)  # Replace non-newline whitespace with single space
+        text = re.sub(r"\n ", "\n", text)  # Remove space after newline
+        text = re.sub(r" \n", "\n", text)  # Remove space before newline
+        text = re.sub(r"\n{3,}", "\n\n", text)  # Max 2 consecutive newlines
+        return text.strip()
 
 
 def _html_to_text(html: str) -> str:
