@@ -12,6 +12,8 @@ gmail:
     - list_gmail_labels
     - manage_gmail_label
     - draft_gmail_message
+    - reply_gmail_draft
+    - forward_gmail_draft
 
   complete:
     - get_gmail_threads_content_batch

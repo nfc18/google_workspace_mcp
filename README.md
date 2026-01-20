@@ -731,6 +731,8 @@ cp .env.oauth21 .env
 | `list_gmail_labels` | Extended | List available labels |
 | `manage_gmail_label` | Extended | Create/update/delete labels |
 | `draft_gmail_message` | Extended | Create drafts |
+| `reply_gmail_draft` | Extended | Create threaded reply drafts |
+| `forward_gmail_draft` | Extended | Create forward drafts |
 | `get_gmail_threads_content_batch` | Complete | Batch retrieve thread content |
 | `batch_modify_gmail_message_labels` | Complete | Batch modify labels |
 | `start_google_auth` | Complete | Initialize authentication |

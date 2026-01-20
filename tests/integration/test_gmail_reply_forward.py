@@ -81,26 +81,13 @@ class TestReplyGmailDraft:
     @pytest.mark.asyncio
     async def test_creates_simple_reply(self, mock_gmail_service, standard_message):
         """Test creating a simple reply to sender only."""
-        from gmail.gmail_tools import reply_gmail_draft
-
-        # Setup mocks
-        mock_gmail_service.users.return_value.messages.return_value.get.return_value.execute = (
-            MagicMock(return_value=standard_message)
-        )
-        mock_gmail_service.users.return_value.drafts.return_value.create.return_value.execute = (
-            MagicMock(return_value=create_draft_response(
-                draft_id="draft-reply-001",
-                thread_id="thread-001"
-            ))
-        )
-
         with patch("gmail.gmail_tools.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = [
                 standard_message,
                 create_draft_response(draft_id="draft-reply-001", thread_id="thread-001"),
             ]
 
-            result = await reply_gmail_draft(
+            result = await _reply_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-original-001",
@@ -117,15 +104,13 @@ class TestReplyGmailDraft:
     @pytest.mark.asyncio
     async def test_reply_all_includes_recipients(self, mock_gmail_service, standard_message):
         """Test that reply-all includes original To and CC recipients."""
-        from gmail.gmail_tools import reply_gmail_draft
-
         with patch("gmail.gmail_tools.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = [
                 standard_message,
                 create_draft_response(draft_id="draft-reply-all-001", thread_id="thread-001"),
             ]
 
-            result = await reply_gmail_draft(
+            result = await _reply_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-original-001",
@@ -139,8 +124,6 @@ class TestReplyGmailDraft:
     @pytest.mark.asyncio
     async def test_reply_excludes_self_from_recipients(self, mock_gmail_service):
         """Test that user's own email is excluded from reply-all recipients."""
-        from gmail.gmail_tools import reply_gmail_draft
-
         # Message where user is in the To field
         message = create_message_response(
             msg_id="msg-001",
@@ -158,7 +141,7 @@ class TestReplyGmailDraft:
                 create_draft_response(draft_id="draft-001"),
             ]
 
-            result = await reply_gmail_draft(
+            result = await _reply_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-001",
@@ -173,15 +156,13 @@ class TestReplyGmailDraft:
     @pytest.mark.asyncio
     async def test_reply_with_quote_includes_original(self, mock_gmail_service, standard_message):
         """Test that include_quote adds the original message."""
-        from gmail.gmail_tools import reply_gmail_draft
-
         with patch("gmail.gmail_tools.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = [
                 standard_message,
                 create_draft_response(draft_id="draft-quoted-001"),
             ]
 
-            result = await reply_gmail_draft(
+            result = await _reply_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-original-001",
@@ -195,15 +176,13 @@ class TestReplyGmailDraft:
     @pytest.mark.asyncio
     async def test_reply_adds_re_prefix_to_subject(self, mock_gmail_service, standard_message):
         """Test that Re: is added to subject if not present."""
-        from gmail.gmail_tools import reply_gmail_draft
-
         with patch("gmail.gmail_tools.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = [
                 standard_message,
                 create_draft_response(draft_id="draft-001"),
             ]
 
-            result = await reply_gmail_draft(
+            result = await _reply_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-original-001",
@@ -218,8 +197,6 @@ class TestReplyGmailDraft:
     @pytest.mark.asyncio
     async def test_reply_builds_references_chain(self, mock_gmail_service, standard_message):
         """Test that References header chain is properly built."""
-        from gmail.gmail_tools import reply_gmail_draft
-
         with patch("gmail.gmail_tools.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = [
                 standard_message,
@@ -228,7 +205,7 @@ class TestReplyGmailDraft:
 
             # This test verifies the function completes successfully
             # The actual References header is built internally
-            result = await reply_gmail_draft(
+            result = await _reply_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-original-001",
@@ -242,15 +219,13 @@ class TestReplyGmailDraft:
     @pytest.mark.asyncio
     async def test_reply_with_additional_cc(self, mock_gmail_service, standard_message):
         """Test adding additional CC recipients to reply."""
-        from gmail.gmail_tools import reply_gmail_draft
-
         with patch("gmail.gmail_tools.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = [
                 standard_message,
                 create_draft_response(draft_id="draft-cc-001"),
             ]
 
-            result = await reply_gmail_draft(
+            result = await _reply_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-original-001",
@@ -265,15 +240,13 @@ class TestReplyGmailDraft:
     @pytest.mark.asyncio
     async def test_reply_with_bcc(self, mock_gmail_service, standard_message):
         """Test adding BCC recipients to reply."""
-        from gmail.gmail_tools import reply_gmail_draft
-
         with patch("gmail.gmail_tools.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = [
                 standard_message,
                 create_draft_response(draft_id="draft-bcc-001"),
             ]
 
-            result = await reply_gmail_draft(
+            result = await _reply_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-original-001",
@@ -296,15 +269,13 @@ class TestForwardGmailDraft:
     @pytest.mark.asyncio
     async def test_creates_forward_draft(self, mock_gmail_service, standard_message):
         """Test creating a basic forward draft."""
-        from gmail.gmail_tools import forward_gmail_draft
-
         with patch("gmail.gmail_tools.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = [
                 standard_message,
                 create_draft_response(draft_id="draft-fwd-001"),
             ]
 
-            result = await forward_gmail_draft(
+            result = await _forward_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-original-001",
@@ -319,15 +290,13 @@ class TestForwardGmailDraft:
     @pytest.mark.asyncio
     async def test_forward_without_comment(self, mock_gmail_service, standard_message):
         """Test forwarding without adding a comment."""
-        from gmail.gmail_tools import forward_gmail_draft
-
         with patch("gmail.gmail_tools.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = [
                 standard_message,
                 create_draft_response(draft_id="draft-fwd-no-comment-001"),
             ]
 
-            result = await forward_gmail_draft(
+            result = await _forward_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-original-001",
@@ -340,15 +309,13 @@ class TestForwardGmailDraft:
     @pytest.mark.asyncio
     async def test_forward_to_multiple_recipients(self, mock_gmail_service, standard_message):
         """Test forwarding to multiple recipients."""
-        from gmail.gmail_tools import forward_gmail_draft
-
         with patch("gmail.gmail_tools.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = [
                 standard_message,
                 create_draft_response(draft_id="draft-fwd-multi-001"),
             ]
 
-            result = await forward_gmail_draft(
+            result = await _forward_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-original-001",
@@ -361,15 +328,13 @@ class TestForwardGmailDraft:
     @pytest.mark.asyncio
     async def test_forward_with_cc(self, mock_gmail_service, standard_message):
         """Test forwarding with CC recipients."""
-        from gmail.gmail_tools import forward_gmail_draft
-
         with patch("gmail.gmail_tools.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = [
                 standard_message,
                 create_draft_response(draft_id="draft-fwd-cc-001"),
             ]
 
-            result = await forward_gmail_draft(
+            result = await _forward_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-original-001",
@@ -383,15 +348,13 @@ class TestForwardGmailDraft:
     @pytest.mark.asyncio
     async def test_forward_with_bcc(self, mock_gmail_service, standard_message):
         """Test forwarding with BCC recipients."""
-        from gmail.gmail_tools import forward_gmail_draft
-
         with patch("gmail.gmail_tools.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = [
                 standard_message,
                 create_draft_response(draft_id="draft-fwd-bcc-001"),
             ]
 
-            result = await forward_gmail_draft(
+            result = await _forward_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-original-001",
@@ -405,15 +368,13 @@ class TestForwardGmailDraft:
     @pytest.mark.asyncio
     async def test_forward_adds_fwd_prefix_to_subject(self, mock_gmail_service, standard_message):
         """Test that Fwd: is added to subject."""
-        from gmail.gmail_tools import forward_gmail_draft
-
         with patch("gmail.gmail_tools.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = [
                 standard_message,
                 create_draft_response(draft_id="draft-001"),
             ]
 
-            result = await forward_gmail_draft(
+            result = await _forward_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-original-001",
@@ -434,8 +395,6 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_reply_to_message_without_references(self, mock_gmail_service):
         """Test replying to a message that has no References header."""
-        from gmail.gmail_tools import reply_gmail_draft
-
         # Message without References header
         message = create_message_response(
             msg_id="msg-no-refs-001",
@@ -453,7 +412,7 @@ class TestEdgeCases:
                 create_draft_response(draft_id="draft-new-thread-001"),
             ]
 
-            result = await reply_gmail_draft(
+            result = await _reply_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-no-refs-001",
@@ -467,8 +426,6 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_reply_to_message_without_display_name(self, mock_gmail_service):
         """Test replying to a message where sender has no display name."""
-        from gmail.gmail_tools import reply_gmail_draft
-
         # Message with email-only From
         message = create_message_response(
             msg_id="msg-001",
@@ -487,7 +444,7 @@ class TestEdgeCases:
                 create_draft_response(draft_id="draft-001"),
             ]
 
-            result = await reply_gmail_draft(
+            result = await _reply_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-001",
@@ -501,8 +458,6 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_forward_message_with_html_body(self, mock_gmail_service):
         """Test forwarding a message that has HTML body."""
-        from gmail.gmail_tools import forward_gmail_draft
-
         # Message with HTML body
         message = create_message_response(
             msg_id="msg-html-001",
@@ -521,7 +476,7 @@ class TestEdgeCases:
                 create_draft_response(draft_id="draft-html-001"),
             ]
 
-            result = await forward_gmail_draft(
+            result = await _forward_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-html-001",
@@ -534,15 +489,13 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_reply_with_multiline_body(self, mock_gmail_service, standard_message):
         """Test reply with multiline body text."""
-        from gmail.gmail_tools import reply_gmail_draft
-
         with patch("gmail.gmail_tools.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.side_effect = [
                 standard_message,
                 create_draft_response(draft_id="draft-multiline-001"),
             ]
 
-            result = await reply_gmail_draft(
+            result = await _reply_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-original-001",
@@ -556,8 +509,6 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_reply_preserves_existing_re_prefix(self, mock_gmail_service):
         """Test that existing Re: prefix is preserved."""
-        from gmail.gmail_tools import reply_gmail_draft
-
         # Message that's already a reply
         message = create_message_response(
             msg_id="msg-001",
@@ -575,7 +526,7 @@ class TestEdgeCases:
                 create_draft_response(draft_id="draft-001"),
             ]
 
-            result = await reply_gmail_draft(
+            result = await _reply_gmail_draft_impl(
                 service=mock_gmail_service,
                 user_google_email="test-user@test.example.com",
                 message_id="msg-001",
