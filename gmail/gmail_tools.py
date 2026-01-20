@@ -1144,6 +1144,378 @@ async def draft_gmail_message(
     return f"Draft created! Draft ID: {draft_id}"
 
 
+# =============================================================================
+# High-Level Reply & Forward Functions
+# =============================================================================
+
+# Import helpers for reply/forward functionality
+from gmail.gmail_helpers import (
+    extract_threading_info,
+    extract_recipients,
+    build_references_chain,
+    format_reply_subject,
+    format_forward_subject,
+    format_quoted_body,
+    format_forward_body,
+    convert_newlines_to_html,
+    filter_reply_all_recipients,
+)
+
+
+async def _reply_gmail_draft_impl(
+    service,
+    user_google_email: str,
+    message_id: str,
+    body: str,
+    reply_all: bool = False,
+    include_quote: bool = True,
+    cc: Optional[str] = None,
+    bcc: Optional[str] = None,
+) -> str:
+    """
+    Internal implementation of reply_gmail_draft.
+
+    This function contains the core logic and can be tested directly
+    without MCP decorator interference.
+
+    Args:
+        service: Gmail API service instance.
+        user_google_email: User's Google email address.
+        message_id: ID of the message to reply to.
+        body: Reply body content (plain text, will be converted to HTML).
+        reply_all: If True, reply to all original recipients.
+        include_quote: If True, include quoted original message.
+        cc: Additional CC recipients (comma-separated).
+        bcc: BCC recipients (comma-separated).
+
+    Returns:
+        Confirmation with draft ID and thread ID.
+    """
+    logger.info(
+        f"[reply_gmail_draft] Creating reply to message {message_id}, "
+        f"reply_all={reply_all}, include_quote={include_quote}"
+    )
+
+    # 1. Fetch original message
+    original_message = await asyncio.to_thread(
+        service.users()
+        .messages()
+        .get(userId="me", id=message_id, format="full")
+        .execute
+    )
+
+    # 2. Extract threading info
+    threading_info = extract_threading_info(original_message)
+    recipients_info = extract_recipients(original_message)
+
+    # 3. Determine recipients
+    if reply_all:
+        to_address, cc_from_original = filter_reply_all_recipients(
+            original_from=threading_info["from_email"],
+            original_to=recipients_info["to"],
+            original_cc=recipients_info["cc"],
+            user_email=user_google_email
+        )
+        # Merge user-provided CC with original CC recipients
+        if cc and cc_from_original:
+            final_cc = f"{cc_from_original}, {cc}"
+        elif cc_from_original:
+            final_cc = cc_from_original
+        else:
+            final_cc = cc
+    else:
+        to_address = threading_info["from_email"]
+        final_cc = cc
+
+    # 4. Format subject
+    subject = format_reply_subject(threading_info["subject"])
+
+    # 5. Build References chain
+    references = build_references_chain(
+        threading_info.get("references", ""),
+        threading_info["message_id"]
+    )
+
+    # 6. Format body
+    html_body = convert_newlines_to_html(body)
+
+    if include_quote:
+        # Extract original body for quoting
+        payload = original_message.get("payload", {})
+        bodies = _extract_message_bodies(payload)
+        original_text = bodies.get("text", "") or _html_to_text(bodies.get("html", ""))
+
+        quote = format_quoted_body(
+            original_text,
+            threading_info["from_name"],
+            threading_info["from_email"],
+            threading_info["date"],
+            as_html=True
+        )
+        html_body = html_body + quote
+
+    # 7. Create the draft using the low-level function
+    raw_message, _ = _prepare_gmail_message(
+        subject=subject,
+        body=html_body,
+        to=to_address,
+        cc=final_cc,
+        bcc=bcc,
+        thread_id=threading_info["thread_id"],
+        in_reply_to=threading_info["message_id"],
+        references=references,
+        body_format="html",
+        from_email=user_google_email,
+    )
+
+    draft_body = {
+        "message": {
+            "raw": raw_message,
+            "threadId": threading_info["thread_id"],
+        }
+    }
+
+    created_draft = await asyncio.to_thread(
+        service.users().drafts().create(userId="me", body=draft_body).execute
+    )
+
+    draft_id = created_draft.get("id")
+    logger.info(
+        f"[reply_gmail_draft] Created draft {draft_id} in thread {threading_info['thread_id']}"
+    )
+
+    return (
+        f"Reply draft created!\n"
+        f"Draft ID: {draft_id}\n"
+        f"Thread ID: {threading_info['thread_id']}\n"
+        f"To: {to_address}"
+    )
+
+
+@server.tool()
+@handle_http_errors("reply_gmail_draft", service_type="gmail")
+@require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
+async def reply_gmail_draft(
+    service,
+    user_google_email: str,
+    message_id: str = Body(..., description="ID of the message to reply to."),
+    body: str = Body(..., description="Reply body content (plain text)."),
+    reply_all: bool = Body(False, description="Reply to all recipients instead of just the sender."),
+    include_quote: bool = Body(True, description="Include quoted original message in reply."),
+    cc: Optional[str] = Body(None, description="Additional CC recipients (comma-separated)."),
+    bcc: Optional[str] = Body(None, description="BCC recipients (comma-separated)."),
+) -> str:
+    """
+    Creates a reply draft to an existing Gmail message.
+
+    This high-level function automatically handles:
+    - Threading (thread_id, In-Reply-To, References headers)
+    - Subject formatting (Re: prefix)
+    - Recipient extraction (reply vs reply-all)
+    - Optional quoting of original message
+
+    Args:
+        user_google_email: User's Google email address. Required.
+        message_id: ID of the message to reply to. Required.
+        body: Reply body content (plain text, will be converted to HTML).
+        reply_all: If True, reply to all original recipients. Defaults to False.
+        include_quote: If True, include quoted original message. Defaults to True.
+        cc: Additional CC recipients (comma-separated). Optional.
+        bcc: BCC recipients (comma-separated). Optional.
+
+    Returns:
+        Confirmation with draft ID and thread ID.
+
+    Examples:
+        # Simple reply to sender only
+        reply_gmail_draft(
+            message_id="abc123",
+            body="Thanks for your email!"
+        )
+
+        # Reply-all with quote
+        reply_gmail_draft(
+            message_id="abc123",
+            body="Please see my comments below.",
+            reply_all=True,
+            include_quote=True
+        )
+
+        # Reply without quoting original
+        reply_gmail_draft(
+            message_id="abc123",
+            body="Quick response - yes, that works!",
+            include_quote=False
+        )
+    """
+    return await _reply_gmail_draft_impl(
+        service=service,
+        user_google_email=user_google_email,
+        message_id=message_id,
+        body=body,
+        reply_all=reply_all,
+        include_quote=include_quote,
+        cc=cc,
+        bcc=bcc,
+    )
+
+
+async def _forward_gmail_draft_impl(
+    service,
+    user_google_email: str,
+    message_id: str,
+    to: str,
+    body: Optional[str] = "",
+    cc: Optional[str] = None,
+    bcc: Optional[str] = None,
+) -> str:
+    """
+    Internal implementation of forward_gmail_draft.
+
+    This function contains the core logic and can be tested directly
+    without MCP decorator interference.
+
+    Args:
+        service: Gmail API service instance.
+        user_google_email: User's Google email address.
+        message_id: ID of the message to forward.
+        to: Recipient email address(es), comma-separated.
+        body: Optional comment to add above forwarded content.
+        cc: CC recipients (comma-separated).
+        bcc: BCC recipients (comma-separated).
+
+    Returns:
+        Confirmation with draft ID.
+    """
+    logger.info(f"[forward_gmail_draft] Creating forward of message {message_id} to {to}")
+
+    # 1. Fetch original message
+    original_message = await asyncio.to_thread(
+        service.users()
+        .messages()
+        .get(userId="me", id=message_id, format="full")
+        .execute
+    )
+
+    # 2. Extract info
+    threading_info = extract_threading_info(original_message)
+    recipients_info = extract_recipients(original_message)
+
+    # 3. Format subject
+    subject = format_forward_subject(threading_info["subject"])
+
+    # 4. Extract original body
+    payload = original_message.get("payload", {})
+    bodies = _extract_message_bodies(payload)
+    original_text = bodies.get("text", "") or _html_to_text(bodies.get("html", ""))
+
+    # 5. Build forward body with header block
+    full_body = format_forward_body(
+        original_body=original_text,
+        from_name=threading_info["from_name"],
+        from_email=threading_info["from_email"],
+        to=recipients_info["to"],
+        date=threading_info["date"],
+        subject=threading_info["subject"],
+        comment=body or "",
+        as_html=True
+    )
+
+    # 6. Create the draft (new thread, not a reply)
+    raw_message, _ = _prepare_gmail_message(
+        subject=subject,
+        body=full_body,
+        to=to,
+        cc=cc,
+        bcc=bcc,
+        body_format="html",
+        from_email=user_google_email,
+    )
+
+    draft_body = {"message": {"raw": raw_message}}
+
+    created_draft = await asyncio.to_thread(
+        service.users().drafts().create(userId="me", body=draft_body).execute
+    )
+
+    draft_id = created_draft.get("id")
+    logger.info(f"[forward_gmail_draft] Created forward draft {draft_id}")
+
+    return (
+        f"Forward draft created!\n"
+        f"Draft ID: {draft_id}\n"
+        f"To: {to}\n"
+        f"Subject: {subject}"
+    )
+
+
+@server.tool()
+@handle_http_errors("forward_gmail_draft", service_type="gmail")
+@require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
+async def forward_gmail_draft(
+    service,
+    user_google_email: str,
+    message_id: str = Body(..., description="ID of the message to forward."),
+    to: str = Body(..., description="Recipient email address(es), comma-separated."),
+    body: Optional[str] = Body("", description="Optional comment to add above forwarded content."),
+    cc: Optional[str] = Body(None, description="CC recipients (comma-separated)."),
+    bcc: Optional[str] = Body(None, description="BCC recipients (comma-separated)."),
+) -> str:
+    """
+    Creates a forward draft of an existing Gmail message.
+
+    This high-level function automatically handles:
+    - Subject formatting (Fwd: prefix)
+    - Forwarded message formatting with header block
+    - Original message inclusion
+
+    Note: Attachments from the original message are NOT automatically
+    included. The user must add attachments manually after draft creation.
+
+    Args:
+        user_google_email: User's Google email address. Required.
+        message_id: ID of the message to forward. Required.
+        to: Recipient email address(es), comma-separated. Required.
+        body: Optional comment to add above forwarded content.
+        cc: CC recipients (comma-separated). Optional.
+        bcc: BCC recipients (comma-separated). Optional.
+
+    Returns:
+        Confirmation with draft ID.
+
+    Examples:
+        # Forward with comment
+        forward_gmail_draft(
+            message_id="abc123",
+            to="colleague@example.com",
+            body="FYI - thought you'd find this interesting."
+        )
+
+        # Forward to multiple recipients without comment
+        forward_gmail_draft(
+            message_id="abc123",
+            to="user1@example.com, user2@example.com"
+        )
+
+        # Forward with CC
+        forward_gmail_draft(
+            message_id="abc123",
+            to="main@example.com",
+            cc="manager@example.com",
+            body="Please review."
+        )
+    """
+    return await _forward_gmail_draft_impl(
+        service=service,
+        user_google_email=user_google_email,
+        message_id=message_id,
+        to=to,
+        body=body,
+        cc=cc,
+        bcc=bcc,
+    )
+
+
 def _format_thread_content(thread_data: dict, thread_id: str) -> str:
     """
     Helper function to format thread content from Gmail API response.
