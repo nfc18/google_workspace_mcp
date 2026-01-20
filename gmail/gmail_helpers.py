@@ -341,6 +341,25 @@ def convert_newlines_to_html(text: str) -> str:
     return text
 
 
+def _extract_email_address(addr: str) -> str:
+    """
+    Extract the email address from a potentially formatted string.
+
+    Handles formats like:
+    - "user@example.com"
+    - "Display Name <user@example.com>"
+    - "<user@example.com>"
+
+    Args:
+        addr: Email string, possibly with display name
+
+    Returns:
+        Just the email address, lowercased
+    """
+    _, email = parseaddr(addr)
+    return email.lower() if email else addr.lower()
+
+
 def filter_reply_all_recipients(
     original_from: str,
     original_to: str,
@@ -364,16 +383,21 @@ def filter_reply_all_recipients(
     """
     user_email_lower = user_email.lower()
 
+    def is_user_email(addr: str) -> bool:
+        """Check if addr matches user's email (exact match, not substring)."""
+        extracted = _extract_email_address(addr)
+        return extracted == user_email_lower
+
     # Start with original sender as primary recipient
     to_addresses = []
-    if original_from and user_email_lower not in original_from.lower():
+    if original_from and not is_user_email(original_from):
         to_addresses.append(original_from)
 
     # Process original To recipients
     if original_to:
         for addr in original_to.split(","):
             addr = addr.strip()
-            if addr and user_email_lower not in addr.lower():
+            if addr and not is_user_email(addr):
                 if addr not in to_addresses:
                     to_addresses.append(addr)
 
@@ -382,7 +406,7 @@ def filter_reply_all_recipients(
     if original_cc:
         for addr in original_cc.split(","):
             addr = addr.strip()
-            if addr and user_email_lower not in addr.lower():
+            if addr and not is_user_email(addr):
                 if addr not in to_addresses and addr not in cc_addresses:
                     cc_addresses.append(addr)
 

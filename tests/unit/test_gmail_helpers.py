@@ -18,6 +18,7 @@ from gmail.gmail_helpers import (
     format_forward_body,
     convert_newlines_to_html,
     filter_reply_all_recipients,
+    _extract_email_address,
 )
 
 
@@ -438,3 +439,84 @@ class TestFilterReplyAllRecipients:
 
         # sender should only appear once
         assert to.count("sender@test.example.com") == 1
+
+    def test_similar_email_not_filtered_substring_bug(self):
+        """Test that similar emails are NOT incorrectly filtered (substring bug fix).
+
+        BUG: Previously used substring matching which would incorrectly filter
+        "mytest@test.example.com" when user_email was "test@test.example.com"
+        because "test@test.example.com" is a substring of "mytest@test.example.com".
+        """
+        to, cc = filter_reply_all_recipients(
+            original_from="sender@test.example.com",
+            original_to="mytest@test.example.com, test@test.example.com",
+            original_cc="",
+            user_email="test@test.example.com"
+        )
+
+        # Parse the result into a list for precise checking
+        to_list = [addr.strip() for addr in to.split(",")]
+
+        # mytest@... should NOT be filtered (it's a different email!)
+        assert "mytest@test.example.com" in to_list
+        # test@... should be filtered (it's the user's email) - check exact match in list
+        assert "test@test.example.com" not in to_list
+
+    def test_email_with_display_name_filtered_correctly(self):
+        """Test that emails with display names are extracted and filtered correctly."""
+        to, cc = filter_reply_all_recipients(
+            original_from="sender@test.example.com",
+            original_to="Test User <test@test.example.com>, Other <other@test.example.com>",
+            original_cc="",
+            user_email="test@test.example.com"
+        )
+
+        # User's email with display name should be filtered
+        assert "test@test.example.com" not in to
+        assert "Test User <test@test.example.com>" not in to
+        # Other should remain
+        assert "other@test.example.com" in to or "Other <other@test.example.com>" in to
+
+
+class TestExtractEmailAddress:
+    """Tests for _extract_email_address helper function."""
+
+    def test_plain_email(self):
+        """Test extracting plain email address."""
+        result = _extract_email_address("user@test.example.com")
+        assert result == "user@test.example.com"
+
+    def test_email_with_display_name(self):
+        """Test extracting email from 'Display Name <email>' format."""
+        result = _extract_email_address("John Doe <john@test.example.com>")
+        assert result == "john@test.example.com"
+
+    def test_email_in_angle_brackets_only(self):
+        """Test extracting email from '<email>' format (no display name)."""
+        result = _extract_email_address("<john@test.example.com>")
+        assert result == "john@test.example.com"
+
+    def test_quoted_display_name(self):
+        """Test extracting email with quoted display name."""
+        result = _extract_email_address('"Doe, John" <john@test.example.com>')
+        assert result == "john@test.example.com"
+
+    def test_returns_lowercase(self):
+        """Test that result is always lowercase."""
+        result = _extract_email_address("John Doe <JOHN@TEST.EXAMPLE.COM>")
+        assert result == "john@test.example.com"
+
+    def test_uppercase_plain_email(self):
+        """Test that plain uppercase email is lowercased."""
+        result = _extract_email_address("USER@TEST.EXAMPLE.COM")
+        assert result == "user@test.example.com"
+
+    def test_empty_string(self):
+        """Test handling empty string."""
+        result = _extract_email_address("")
+        assert result == ""
+
+    def test_malformed_fallback(self):
+        """Test that malformed input falls back to lowercase of input."""
+        result = _extract_email_address("not-an-email")
+        assert result == "not-an-email"
