@@ -317,10 +317,12 @@ def convert_newlines_to_html(text: str) -> str:
     Convert plain text newlines to HTML line breaks.
 
     Handles both paragraph breaks (double newlines) and
-    single line breaks appropriately.
+    single line breaks appropriately. Also handles escaped
+    newlines (literal \\n strings) that may come from JSON
+    transport or MCP tool calls.
 
     Args:
-        text: Plain text with \\n newlines
+        text: Plain text with \\n newlines (real or escaped)
 
     Returns:
         Text with <br> tags instead of newlines
@@ -330,14 +332,25 @@ def convert_newlines_to_html(text: str) -> str:
         'Hello<br><br>World'
         >>> convert_newlines_to_html("Line 1\\nLine 2")
         'Line 1<br>Line 2'
+        >>> convert_newlines_to_html("Line 1\\\\nLine 2")  # escaped
+        'Line 1<br>Line 2'
     """
     if not text:
         return ""
 
-    # First convert double newlines (paragraphs)
+    # First handle escaped newlines (literal backslash-n from JSON/MCP transport)
+    # Must do this BEFORE handling real newlines
+    # Handle double escaped newlines first (paragraphs)
+    text = text.replace("\\n\\n", "<br><br>")
+    # Then single escaped newlines
+    text = text.replace("\\n", "<br>")
+
+    # Then handle real newlines (for direct function calls)
+    # Double newlines (paragraphs)
     text = text.replace("\n\n", "<br><br>")
-    # Then convert remaining single newlines
+    # Single newlines
     text = text.replace("\n", "<br>")
+
     return text
 
 

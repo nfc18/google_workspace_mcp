@@ -373,6 +373,33 @@ class TestConvertNewlinesToHtml:
         result = convert_newlines_to_html("No breaks here")
         assert result == "No breaks here"
 
+    def test_converts_escaped_double_newlines(self):
+        """Test conversion of escaped paragraph breaks from JSON/MCP transport.
+
+        BUG FIX: When text is passed through JSON serialization (e.g., MCP tool calls),
+        newlines may arrive as literal backslash-n strings instead of actual newlines.
+        """
+        # Literal backslash-n (as it would appear in JSON transport)
+        result = convert_newlines_to_html("Para 1\\n\\nPara 2")
+        assert result == "Para 1<br><br>Para 2"
+
+    def test_converts_escaped_single_newlines(self):
+        """Test conversion of escaped single line breaks from JSON/MCP transport."""
+        result = convert_newlines_to_html("Line 1\\nLine 2")
+        assert result == "Line 1<br>Line 2"
+
+    def test_mixed_escaped_newlines(self):
+        """Test conversion of mixed escaped newlines (bullet points use case)."""
+        # This simulates the Objentis bug: bullet points with escaped newlines
+        result = convert_newlines_to_html("Option A\\n\\nOption B\\n\\nOption C")
+        assert result == "Option A<br><br>Option B<br><br>Option C"
+
+    def test_handles_both_real_and_escaped_newlines(self):
+        """Test handling when both real and escaped newlines are present."""
+        # Unlikely but should still work
+        result = convert_newlines_to_html("Real\n\nEscaped\\n\\nMixed")
+        assert result == "Real<br><br>Escaped<br><br>Mixed"
+
 
 class TestFilterReplyAllRecipients:
     """Tests for filter_reply_all_recipients function."""
