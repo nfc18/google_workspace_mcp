@@ -105,6 +105,25 @@ class MinimalOAuthServer:
                 logger.error(error_message_detail, exc_info=True)
                 return create_server_error_response(str(e))
 
+    def _check_existing_oauth_server(self, hostname: str) -> bool:
+        """
+        Check if an existing OAuth server is running on our port.
+        Returns True if there's a working OAuth callback endpoint.
+        """
+        import http.client
+        try:
+            conn = http.client.HTTPConnection(hostname, self.port, timeout=2)
+            # Just check if the server responds - don't need a valid OAuth callback
+            conn.request("GET", "/oauth2callback?code=health_check&state=health_check")
+            response = conn.getresponse()
+            conn.close()
+            # Any response (even error) means the OAuth server is running
+            # The endpoint exists if we get 200 (success page) or any HTML response
+            return response.status in (200, 400, 500)
+        except Exception as e:
+            logger.debug(f"Could not connect to existing server on port {self.port}: {e}")
+            return False
+
     def _setup_attachment_route(self):
         """Setup the attachment serving route."""
         from core.attachment_storage import get_attachment_storage
@@ -155,7 +174,13 @@ class MinimalOAuthServer:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.bind((hostname, self.port))
         except OSError:
-            error_msg = f"Port {self.port} is already in use on {hostname}. Cannot start minimal OAuth server."
+            # Port is in use - check if it's already a working OAuth server
+            logger.info(f"Port {self.port} is in use, checking if OAuth server is already running...")
+            if self._check_existing_oauth_server(hostname):
+                logger.info(f"Existing OAuth server on port {self.port} is responding - reusing it")
+                self.is_running = True  # Mark as running (using external server)
+                return True, ""
+            error_msg = f"Port {self.port} is already in use on {hostname} by a non-OAuth process. Cannot start minimal OAuth server."
             logger.error(error_msg)
             return False, error_msg
 
