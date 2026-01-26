@@ -7,6 +7,7 @@ This module provides utility functions for:
 - Formatting subjects for replies and forwards
 - Formatting quoted message bodies
 - Converting plain text to HTML
+- Removing artificial line breaks (word-wrap artifacts)
 
 SECURITY NOTE:
 This file contains no credentials, personal data, or environment-specific
@@ -16,6 +17,9 @@ configuration. All such data must be passed as parameters at runtime.
 import re
 from typing import Optional, Dict, Any
 from email.utils import parseaddr
+
+# Gmail HTML template - simple wrapper with sans-serif font
+GMAIL_HTML_TEMPLATE = '<div style="font-family: sans-serif;">{content}</div>'
 
 
 def extract_threading_info(message: Dict[str, Any]) -> Dict[str, str]:
@@ -290,7 +294,12 @@ def format_forward_body(
         )
         forwarded_body = escaped_body.replace("\n", "<br>")
 
-        comment_html = convert_newlines_to_html(comment) if comment else ""
+        # Process comment through formatting pipeline
+        if comment:
+            processed_comment = remove_artificial_line_breaks(comment)
+            comment_html = convert_newlines_to_html(processed_comment)
+        else:
+            comment_html = ""
 
         return f"""{comment_html}<br><br>
 ---------- Forwarded message ----------<br>
@@ -310,6 +319,96 @@ To: {to}
 
 """
         return f"{comment}\n{header}{original_body}" if comment else f"{header}{original_body}"
+
+
+def remove_artificial_line_breaks(text: str) -> str:
+    """
+    Remove artificial line breaks from text.
+
+    Detects and removes line breaks that were inserted for word-wrapping
+    (typically at 70-80 characters). These artificial breaks are identified by:
+    - Line ends with a word character (not punctuation)
+    - Line is less than 100 characters
+    - Next line starts with a lowercase letter
+
+    Args:
+        text: Text that may contain artificial line breaks
+
+    Returns:
+        Text with artificial breaks removed
+
+    Example:
+        >>> remove_artificial_line_breaks("Thanks for sending those images. Our team had a closer\\nlook, and I want to give you an honest assessment.")
+        'Thanks for sending those images. Our team had a closer look, and I want to give you an honest assessment.'
+        >>> remove_artificial_line_breaks("First paragraph.\\n\\nSecond paragraph.")
+        'First paragraph.\\n\\nSecond paragraph.'
+    """
+    if not text:
+        return ""
+
+    # First normalize escaped newlines to real newlines for processing
+    normalized = text.replace("\\n", "\n")
+
+    # Split into lines for analysis
+    lines = normalized.split("\n")
+    result = []
+
+    i = 0
+    while i < len(lines):
+        current_line = lines[i]
+        next_line = lines[i + 1] if i + 1 < len(lines) else None
+
+        # Check if this is an artificial line break:
+        # 1. Current line is less than 100 characters
+        # 2. Current line ends with a word character (letter/number, not punctuation)
+        # 3. Next line exists and starts with a lowercase letter
+        is_artificial_break = (
+            next_line is not None
+            and len(current_line) > 0
+            and len(current_line) < 100
+            and re.search(r'\w$', current_line.rstrip())
+            and re.search(r'^[a-z]', next_line.lstrip())
+        )
+
+        if is_artificial_break:
+            # Join with the next line using a space
+            result.append(current_line.rstrip() + " ")
+        else:
+            result.append(current_line)
+            # Add newline back unless it's the last line
+            if i < len(lines) - 1:
+                result.append("\n")
+
+        i += 1
+
+    return "".join(result)
+
+
+def wrap_with_gmail_template(content: str) -> str:
+    """
+    Wrap content with the Gmail HTML template.
+
+    Adds a simple wrapper with sans-serif font styling.
+    Only wraps if content doesn't already have HTML structure.
+
+    Args:
+        content: HTML content to wrap
+
+    Returns:
+        Content wrapped in Gmail template
+
+    Example:
+        >>> wrap_with_gmail_template("Hello World")
+        '<div style="font-family: sans-serif;">Hello World</div>'
+    """
+    if not content:
+        return ""
+
+    # Check if already has HTML structure
+    if re.search(r'<html|<body|<div\s+style', content, re.IGNORECASE):
+        return content
+
+    return GMAIL_HTML_TEMPLATE.replace("{content}", content)
 
 
 def convert_newlines_to_html(text: str) -> str:
@@ -352,6 +451,40 @@ def convert_newlines_to_html(text: str) -> str:
     text = text.replace("\n", "<br>")
 
     return text
+
+
+def prepare_email_body(text: str) -> str:
+    """
+    Prepare email body for Gmail API.
+
+    Applies the full formatting pipeline:
+    1. Removes artificial line breaks (70-80 char word-wrap artifacts)
+    2. Converts newlines to HTML <br> tags
+    3. Wraps in Gmail HTML template with font styling
+
+    Args:
+        text: Plain text email body
+
+    Returns:
+        Formatted HTML ready for Gmail API
+
+    Example:
+        >>> prepare_email_body("Hello\\n\\nWorld")
+        '<div style="font-family: sans-serif;">Hello<br><br>World</div>'
+    """
+    if not text:
+        return ""
+
+    # 1. Remove artificial line breaks
+    processed = remove_artificial_line_breaks(text)
+
+    # 2. Convert newlines to HTML
+    processed = convert_newlines_to_html(processed)
+
+    # 3. Wrap in template
+    processed = wrap_with_gmail_template(processed)
+
+    return processed
 
 
 def _extract_email_address(addr: str) -> str:

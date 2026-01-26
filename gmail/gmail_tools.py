@@ -28,6 +28,9 @@ from auth.scopes import (
 
 logger = logging.getLogger(__name__)
 
+# Import prepare_email_body for plain text formatting
+from gmail.gmail_helpers import prepare_email_body
+
 GMAIL_BATCH_SIZE = 25
 GMAIL_REQUEST_DELAY = 0.1
 HTML_BODY_TRUNCATE_LIMIT = 20000
@@ -282,7 +285,14 @@ def _prepare_gmail_message(
     if normalized_format not in {"plain", "html"}:
         raise ValueError("body_format must be either 'plain' or 'html'.")
 
-    message = MIMEText(body, normalized_format)
+    # Apply formatting pipeline for plain text
+    # This removes artificial line breaks, converts newlines to <br>, and wraps in template
+    if normalized_format == "plain":
+        processed_body = prepare_email_body(body)
+        message = MIMEText(processed_body, "html")
+    else:
+        # HTML content is used as-is
+        message = MIMEText(body, normalized_format)
     message["Subject"] = reply_subject
 
     # Add sender if provided
@@ -1159,6 +1169,8 @@ from gmail.gmail_helpers import (
     format_forward_body,
     convert_newlines_to_html,
     filter_reply_all_recipients,
+    remove_artificial_line_breaks,
+    wrap_with_gmail_template,
 )
 
 
@@ -1237,7 +1249,11 @@ async def _reply_gmail_draft_impl(
     )
 
     # 6. Format body
-    html_body = convert_newlines_to_html(body)
+    # Apply full formatting pipeline:
+    # 1. Remove artificial line breaks (70-80 char word-wrap)
+    # 2. Convert newlines to HTML
+    processed_body = remove_artificial_line_breaks(body)
+    html_body = convert_newlines_to_html(processed_body)
 
     if include_quote:
         # Extract original body for quoting
@@ -1253,6 +1269,9 @@ async def _reply_gmail_draft_impl(
             as_html=True
         )
         html_body = html_body + quote
+
+    # 3. Wrap the complete body in Gmail template
+    html_body = wrap_with_gmail_template(html_body)
 
     # 7. Create the draft using the low-level function
     raw_message, _ = _prepare_gmail_message(
@@ -1410,6 +1429,7 @@ async def _forward_gmail_draft_impl(
     original_text = bodies.get("text", "") or _html_to_text(bodies.get("html", ""))
 
     # 5. Build forward body with header block
+    # Note: format_forward_body already applies remove_artificial_line_breaks to comment
     full_body = format_forward_body(
         original_body=original_text,
         from_name=threading_info["from_name"],
@@ -1421,7 +1441,10 @@ async def _forward_gmail_draft_impl(
         as_html=True
     )
 
-    # 6. Create the draft (new thread, not a reply)
+    # 6. Wrap in Gmail template
+    full_body = wrap_with_gmail_template(full_body)
+
+    # 7. Create the draft (new thread, not a reply)
     raw_message, _ = _prepare_gmail_message(
         subject=subject,
         body=full_body,

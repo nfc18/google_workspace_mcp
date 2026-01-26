@@ -19,6 +19,9 @@ from gmail.gmail_helpers import (
     convert_newlines_to_html,
     filter_reply_all_recipients,
     _extract_email_address,
+    remove_artificial_line_breaks,
+    wrap_with_gmail_template,
+    prepare_email_body,
 )
 
 
@@ -547,3 +550,148 @@ class TestExtractEmailAddress:
         """Test that malformed input falls back to lowercase of input."""
         result = _extract_email_address("not-an-email")
         assert result == "not-an-email"
+
+
+class TestRemoveArtificialLineBreaks:
+    """Tests for remove_artificial_line_breaks function."""
+
+    def test_removes_break_when_line_ends_with_word_and_next_starts_lowercase(self):
+        """Test removal of artificial break mid-sentence."""
+        text = "Thanks for sending those images. Our team had a closer\nlook, and I want to give you an honest assessment."
+        result = remove_artificial_line_breaks(text)
+
+        assert result == "Thanks for sending those images. Our team had a closer look, and I want to give you an honest assessment."
+
+    def test_preserves_break_after_punctuation(self):
+        """Test that breaks after punctuation are preserved."""
+        text = "First sentence.\nSecond sentence."
+        result = remove_artificial_line_breaks(text)
+
+        assert result == "First sentence.\nSecond sentence."
+
+    def test_preserves_paragraph_breaks(self):
+        """Test that double newlines (paragraphs) are preserved."""
+        text = "First paragraph.\n\nSecond paragraph."
+        result = remove_artificial_line_breaks(text)
+
+        assert result == "First paragraph.\n\nSecond paragraph."
+
+    def test_preserves_break_when_next_line_starts_uppercase(self):
+        """Test that breaks before uppercase are preserved."""
+        text = "End of sentence\nNew sentence here."
+        result = remove_artificial_line_breaks(text)
+
+        assert result == "End of sentence\nNew sentence here."
+
+    def test_handles_multiple_artificial_breaks_in_sequence(self):
+        """Test removal of multiple consecutive artificial breaks."""
+        text = "This is a very long line that was artificially\nbroken in the middle because of word\nwrapping at 70 characters."
+        result = remove_artificial_line_breaks(text)
+
+        assert result == "This is a very long line that was artificially broken in the middle because of word wrapping at 70 characters."
+
+    def test_handles_escaped_newlines(self):
+        """Test handling of escaped newlines from JSON transport."""
+        text = "This was artificially\\nbroken and should be joined."
+        result = remove_artificial_line_breaks(text)
+
+        assert result == "This was artificially broken and should be joined."
+
+    def test_handles_empty_string(self):
+        """Test handling of empty string."""
+        assert remove_artificial_line_breaks("") == ""
+
+    def test_handles_none(self):
+        """Test handling of None."""
+        assert remove_artificial_line_breaks(None) == ""
+
+    def test_preserves_lines_over_100_characters(self):
+        """Test that long lines (>=100 chars) don't trigger removal."""
+        long_line = "A" * 100
+        text = long_line + "\ncontinued here"
+        result = remove_artificial_line_breaks(text)
+
+        # Should NOT join because line is >= 100 chars
+        assert result == text
+
+
+class TestWrapWithGmailTemplate:
+    """Tests for wrap_with_gmail_template function."""
+
+    def test_wraps_content_in_template(self):
+        """Test that content is wrapped in Gmail template."""
+        result = wrap_with_gmail_template("Hello World")
+
+        assert '<div style="font-family: sans-serif;">' in result
+        assert "Hello World" in result
+        assert result.endswith("</div>")
+
+    def test_does_not_double_wrap_html(self):
+        """Test that existing HTML is not double-wrapped."""
+        html = '<html><body>Already wrapped</body></html>'
+        result = wrap_with_gmail_template(html)
+
+        assert result == html
+
+    def test_does_not_wrap_body_tag(self):
+        """Test that content with body tag is not wrapped."""
+        html = '<body>Has body</body>'
+        result = wrap_with_gmail_template(html)
+
+        assert result == html
+
+    def test_does_not_wrap_styled_div(self):
+        """Test that content with styled div is not wrapped."""
+        html = '<div style="color: red;">Styled</div>'
+        result = wrap_with_gmail_template(html)
+
+        assert result == html
+
+    def test_handles_empty_string(self):
+        """Test handling of empty string."""
+        assert wrap_with_gmail_template("") == ""
+
+    def test_handles_none(self):
+        """Test handling of None."""
+        assert wrap_with_gmail_template(None) == ""
+
+
+class TestPrepareEmailBody:
+    """Tests for prepare_email_body function."""
+
+    def test_applies_full_formatting_pipeline(self):
+        """Test that full formatting pipeline is applied."""
+        text = "Thanks for sending those images. Our team had a closer\nlook at them."
+        result = prepare_email_body(text)
+
+        # Should remove artificial break
+        assert "closer look" in result
+        # Should convert newlines to <br> (remaining ones)
+        # Should wrap in template
+        assert '<div style="font-family: sans-serif;">' in result
+
+    def test_converts_newlines_to_html(self):
+        """Test that newlines are converted to <br>."""
+        result = prepare_email_body("Line 1\nLine 2")
+
+        assert "<br>" in result
+
+    def test_wraps_in_template(self):
+        """Test that content is wrapped in Gmail template."""
+        result = prepare_email_body("Hello World")
+
+        assert '<div style="font-family: sans-serif;">' in result
+
+    def test_handles_empty_string(self):
+        """Test handling of empty string."""
+        assert prepare_email_body("") == ""
+
+    def test_handles_none(self):
+        """Test handling of None."""
+        assert prepare_email_body(None) == ""
+
+    def test_handles_paragraphs(self):
+        """Test that paragraph breaks are preserved."""
+        result = prepare_email_body("First para.\n\nSecond para.")
+
+        assert "<br><br>" in result
