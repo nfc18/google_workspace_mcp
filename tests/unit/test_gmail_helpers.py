@@ -614,6 +614,26 @@ class TestRemoveArtificialLineBreaks:
         # Should NOT join because line is >= 100 chars
         assert result == text
 
+    def test_preserves_option_lists_no_false_positive_on_single_letters(self):
+        """Test that 'Option A/B/C' style lists are preserved.
+
+        This was a bug: 'Option A' was being merged with 'Option B' because
+        'A' matched the connector pattern (|a|an|).
+        """
+        text = "Option A\n\nOption B\n\nOption C"
+        result = remove_artificial_line_breaks(text)
+
+        # Should preserve all line breaks - these are intentional paragraph breaks
+        assert result == "Option A\n\nOption B\n\nOption C"
+
+    def test_preserves_german_option_lists_with_uppercase_nouns(self):
+        """Test that German option lists with uppercase nouns are preserved."""
+        text = "Hier sind die Optionen:\n\nOption A\n\nOption B"
+        result = remove_artificial_line_breaks(text)
+
+        assert "Option A\n\n" in result
+        assert "Option B" in result
+
 
 class TestWrapWithGmailTemplate:
     """Tests for wrap_with_gmail_template function."""

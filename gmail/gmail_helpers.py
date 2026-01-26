@@ -327,9 +327,13 @@ def remove_artificial_line_breaks(text: str) -> str:
 
     Detects and removes line breaks that were inserted for word-wrapping
     (typically at 70-80 characters). These artificial breaks are identified by:
-    - Line ends with a word character (not punctuation)
+    - Line ends with a word character (not sentence-ending punctuation)
     - Line is less than 100 characters
-    - Next line starts with a lowercase letter
+    - Next line continues the sentence (lowercase start, or line ends with
+      connector word/adjective that precedes nouns)
+
+    Handles German text where nouns start with uppercase by also checking
+    if the line ends with articles, prepositions, or adjective endings.
 
     Args:
         text: Text that may contain artificial line breaks
@@ -340,8 +344,8 @@ def remove_artificial_line_breaks(text: str) -> str:
     Example:
         >>> remove_artificial_line_breaks("Thanks for sending those images. Our team had a closer\\nlook, and I want to give you an honest assessment.")
         'Thanks for sending those images. Our team had a closer look, and I want to give you an honest assessment.'
-        >>> remove_artificial_line_breaks("First paragraph.\\n\\nSecond paragraph.")
-        'First paragraph.\\n\\nSecond paragraph.'
+        >>> remove_artificial_line_breaks("Text mit künstlichen\\nZeilenumbrüchen")
+        'Text mit künstlichen Zeilenumbrüchen'
     """
     if not text:
         return ""
@@ -353,21 +357,41 @@ def remove_artificial_line_breaks(text: str) -> str:
     lines = normalized.split("\n")
     result = []
 
+    # German articles, prepositions, conjunctions that typically precede nouns
+    # Note: Avoid single-letter words (a, I) as they cause false positives (e.g., "Option A")
+    connector_pattern = re.compile(
+        r'\b(mit|und|oder|der|die|das|den|dem|des|ein|eine|einem|einer|eines|'
+        r'zu|von|für|bei|nach|über|unter|durch|ohne|gegen|bis|seit|als|wie|'
+        r'auf|aus|vor|hinter|neben|zwischen|an|in|im|am|zum|zur|vom|beim|'
+        r'the|of|to|for|on|with|at|by|from|into|onto)\s*$',
+        re.IGNORECASE
+    )
+
+    # German adjective endings (precede nouns) - require 5+ chars before ending to avoid false positives like "Option"
+    adjective_pattern = re.compile(r'\b\w{5,}(en|er|es|em)\s*$', re.IGNORECASE)
+
     i = 0
     while i < len(lines):
         current_line = lines[i]
         next_line = lines[i + 1] if i + 1 < len(lines) else None
 
-        # Check if this is an artificial line break:
-        # 1. Current line is less than 100 characters
-        # 2. Current line ends with a word character (letter/number, not punctuation)
-        # 3. Next line exists and starts with a lowercase letter
+        trimmed_line = current_line.strip()
+        trimmed_next = next_line.strip() if next_line else ""
+
+        # Check various conditions
+        ends_with_word = bool(re.search(r'\w$', trimmed_line))
+        ends_with_sentence_punct = bool(re.search(r'[.?!:;]$', trimmed_line))
+        next_starts_lowercase = bool(re.search(r'^[a-zäöü]', trimmed_next))
+        ends_with_connector = bool(connector_pattern.search(trimmed_line))
+        ends_with_adjective = bool(adjective_pattern.search(trimmed_line))
+
         is_artificial_break = (
             next_line is not None
             and len(current_line) > 0
             and len(current_line) < 100
-            and re.search(r'\w$', current_line.rstrip())
-            and re.search(r'^[a-z]', next_line.lstrip())
+            and ends_with_word
+            and not ends_with_sentence_punct
+            and (next_starts_lowercase or ends_with_connector or ends_with_adjective)
         )
 
         if is_artificial_break:
